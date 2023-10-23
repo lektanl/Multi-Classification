@@ -1,0 +1,327 @@
+```{r}
+library(R6)
+library(dplyr)
+library(magrittr)
+library(pROC)
+library(caret)
+library(e1071)
+library(ggplot2)
+library(xgboost)
+library(randomForest)
+source("Processor.R")
+df_raw <- read.csv("music_genre.csv")
+
+processor <- Processor$new(df_raw)
+
+frequency_map <- c(
+  'A' = 440.00,
+  'A#' = 466.16,
+  'B' = 493.88,
+  'C' = 523.25,
+  'C#' = 554.37,
+  'D' = 587.33,
+  'D#' = 622.25,
+  'E' = 659.26,
+  'F' = 698.46,
+  'F#' = 739.99,
+  'G' = 783.99,
+  'G#' = 830.61
+)
+
+columns_to_drop <- c('obtained_date', 'instance_id')
+
+processed_df <- processor$process_dataframe('key', 'music_genre', frequency_map, columns_to_drop, threshold_ratio = 0.1)
+
+
+
+#write.csv(processed_df, 'processed_df.csv', row.names = FALSE)
+```
+
+
+```{r}
+source("DataPreprocessor.R")
+df_scaled<-read.csv("df_scaled.csv")
+dp <- DataPreprocessor$new()
+result <- dp$perform_initial_steps(processed_df, use_pca = FALSE)
+#heatmap_plot <- dp$visualize_similarity_matrix(result$similarity_mtx)
+#print(heatmap_plot)
+```
+
+```{r}
+#load data
+train_set <- result$train_set
+test_set <- result$test_set
+```
+
+```{r}
+evaluate_model <- function(model, test_set) {
+  
+  # Convert target variables into factors
+  test_set$label <- factor(test_set$label)
+
+  # Predictions based on model type
+  if (inherits(model, "xgb.Booster")) {
+    test_data_matrix <- xgb.DMatrix(as.matrix(test_set[, -ncol(test_set)]))
+    raw_predictions <- predict(model, newdata = test_data_matrix)
+    num_classes <- length(levels(test_set$label))
+    prob_predictions <- matrix(raw_predictions, ncol = num_classes, byrow = TRUE)
+    colnames(prob_predictions) <- levels(test_set$label)
+  } else if (inherits(model, "svm")) {
+    prob_predictions <- attr(predict(model, newdata = test_set, probability = TRUE), "probabilities")
+    predictions <- as.factor(levels(test_set$label)[apply(prob_predictions, 1, which.max)])
+  } else {
+    predictions <- predict(model, newdata = test_set)
+    if(inherits(model, "naiveBayes")) {
+      prob_predictions <- predict(model, newdata = test_set, type = "raw")
+      colnames(prob_predictions) <- levels(test_set$label)
+    } else if (inherits(model, "randomForest")) {
+      prob_predictions <- predict(model, newdata = test_set, type = "prob")
+    } else {
+      prob_predictions <- attr(predict(model, newdata = test_set, type = "response"), "probabilities")
+    }
+  }
+
+  # If predictions are not computed for some models, compute them
+  if(!exists("predictions")) {
+    predictions <- as.factor(levels(test_set$label)[apply(prob_predictions, 1, which.max)])
+  }
+
+  # Confusion matrix and other metrics
+  confusion_matrix <- confusionMatrix(predictions, test_set$label)
+  
+  # Classification report
+  classification_report <- table(Reference = test_set$label, Prediction = predictions)
+  
+  # ROC curve and AUC for each class
+  colors <- rainbow(length(levels(test_set$label)))
+  plot(0:1, 0:1, type="n", xlab="1-Specificity", ylab="Sensitivity", main="ROC Curves", xlim=c(0,1), ylim=c(0,1), asp=1)
+  abline(0, 1, lty=2)  # Add diagonal line
+  for(i in seq_along(levels(test_set$label))) {
+    class <- levels(test_set$label)[i]
+    actual <- as.numeric(test_set$label == class)
+    prob_predictions_class <- prob_predictions[, which(colnames(prob_predictions) == class)]
+    if (is.matrix(prob_predictions_class)) {
+      prob_predictions_class <- prob_predictions_class[,1]
+    }
+    roc_obj <- roc(response = actual, predictor = prob_predictions_class)
+    
+    # Reverse the specificity values
+    rev_specificity <- 1 - roc_obj$specificities
+    
+    lines(x = rev_specificity, y = roc_obj$sensitivities, col = colors[i])
+  }
+  legend("bottomright", legend = levels(test_set$label), fill = colors, cex = 0.7)
+
+  # Print results
+  cat("Model Evaluation Results:\n")
+  cat("------------------------------\n")
+  cat("Accuracy:", confusion_matrix$overall["Accuracy"], "\n")
+  cat("\nConfusion Matrix:\n")
+  print(confusion_matrix)
+
+  return(list(accuracy = confusion_matrix$overall["Accuracy"], confusion_matrix = confusion_matrix, classification_report = classification_report))
+}
+
+```
+
+```{r}
+# SVM model training function
+train_svm_model <- function(train_set) {
+  # Convert target variables into factors
+  train_set$label <- factor(train_set$label)
+  
+  # Split feature variables and target variables
+  X_train <- train_set[, -ncol(train_set)]
+  Y_train <- train_set[, ncol(train_set)]
+  
+  # Start time
+  start_time <- Sys.time()
+  
+  # Train the SVM model
+  svm_model <- svm(Y_train ~ ., data = data.frame(Y_train, X_train), kernel = "radial",  degree = 1, cost = 1, probability = TRUE)
+  
+  # End time
+  end_time <- Sys.time()
+  runtime <- difftime(end_time, start_time, units = "secs")
+  
+  cat("SVM Training Runtime:", runtime, "seconds", "\n")
+  
+  return(svm_model)
+}
+```
+
+```{r}
+# Call the functions
+svm_model <- train_svm_model(train_set)
+```
+
+```{r}
+svm_evaluation_results <- evaluate_model(svm_model, test_set)
+```
+
+We first perform Principal Component Analysis (PCA) on the training dataset, retaining only the first two principal components for visualization purposes. Next, we create a grid in this two-dimensional PCA space and transform these grid points back to the original feature space. We then predict the classifications of these points using the pre-trained SVM model. Finally, using ggplot2, we plot the SVM decision boundaries and the original data points in the PCA space, providing a visual representation of how the SVM classifies the data.
+```{r}
+# Apply PCA and retain first two principal components for visualization
+pca_result <- prcomp(train_set[, -ncol(train_set)], center = TRUE, scale. = TRUE)
+train_set_pca <- data.frame(PC1 = pca_result$x[, 1], PC2 = pca_result$x[, 2], label = train_set$label)
+
+# SVM Decision Boundary Plotting function for 2D PCA visualization
+plot_svm_decision_boundary <- function(svm_model, pca_data, pca_result) {
+  # Create a grid over the PCA space
+  grid <- expand.grid(PC1 = seq(min(pca_data$PC1) - 1, max(pca_data$PC1) + 1, length.out = 100),
+                      PC2 = seq(min(pca_data$PC2) - 1, max(pca_data$PC2) + 1, length.out = 100))
+  
+  # Transform the grid back to the original feature space
+  scaling <- scale(train_set[, -ncol(train_set)], center = TRUE, scale = TRUE)
+  original_space <- as.data.frame(as.matrix(grid) %*% t(pca_result$rotation[, 1:2]) + attr(scaling, "scaled:center"))
+  
+  # Predict using the original SVM model
+  grid$pred <- as.factor(predict(svm_model, newdata = original_space))
+  
+  # Ensure factor levels match
+  pca_data$label <- factor(pca_data$label, levels = levels(grid$pred))
+  grid$pred <- factor(grid$pred, levels = levels(pca_data$label))
+  
+  # Plot the decision boundary in the 2D PCA space
+  p <- ggplot(pca_data, aes(x = PC1, y = PC2)) +
+    geom_tile(data = grid, aes(fill = pred, x = PC1, y = PC2), alpha = 0.2) +
+    geom_point(aes(color = label)) +
+    labs(title = "SVM Decision Boundary in PCA Space", x = "PC1", y = "PC2") +
+    theme_minimal() +
+    scale_fill_discrete(name = "Predicted Class") +
+    scale_color_discrete(name = "Actual Class") +
+    theme(legend.text = element_text(size = 5), legend.title = element_text(size = 6))
+  
+  return(p)
+}
+
+# Call the function
+p <- plot_svm_decision_boundary(svm_model, train_set_pca, pca_result)
+print(p)
+
+
+```
+
+```{r}
+nb_model <- function(train_set, test_set) {
+  # Convert labels to factor form
+  train_set$label <- factor(train_set$label)
+  test_set$label <- factor(test_set$label)
+  
+  # Divide into X_train, X_test, y_train, y_test
+  X_train <- train_set[, -ncol(train_set)]  # attributes
+  y_train <- train_set$label  # target variable
+  X_test <- test_set[, -ncol(test_set)]
+  y_test <- test_set$label
+  
+  # Train the naiveBayes classifier
+  start_time <- Sys.time()
+  model <- naiveBayes(X_train, y_train, laplace = 1)
+  end_time <- Sys.time()
+  
+  # Print the model training runtime
+  cat("Model Training Runtime:", as.numeric(difftime(end_time, start_time, units = "secs")), "seconds", "\n")
+  
+  # Predict using the model
+  predictions <- predict(model, X_test)
+  prob_predictions <- predict(model, X_test, type = "raw")
+  
+  return(list(model = model, predictions = predictions, prob_predictions = prob_predictions, y_test = y_test))
+}
+
+```
+
+```{r}
+# For naiveBayes
+nb_results <- nb_model(train_set, test_set)
+```
+
+```{r}
+nb_evaluation_results <- evaluate_model(nb_results$model, test_set)
+```
+
+```{r}
+train_rf_model <- function(train_set, ntree=100, mtry=NULL) {
+  # Convert target variables into factors
+  train_set$label <- factor(train_set$label)
+  
+  # Split feature variables and target variables
+  X_train <- train_set[, -ncol(train_set)]
+  Y_train <- train_set[, ncol(train_set)]
+  
+  # If mtry is not provided, set it to the square root of the number of variables
+  if (is.null(mtry)) {
+    mtry = sqrt(ncol(X_train))
+  }
+  
+  # Start time
+  start_time <- Sys.time()
+  
+  # Train the random forest model
+  rf_model <- randomForest(Y_train ~ ., data = data.frame(Y_train, X_train), ntree=ntree, mtry=mtry, importance=TRUE)
+  
+  # End time
+  end_time <- Sys.time()
+  runtime <- difftime(end_time, start_time, units = "secs")
+  
+  cat("Random Forest Training Runtime:", runtime, "seconds", "\n")
+  
+  return(rf_model)
+}
+
+```
+
+```{r}
+# Train the random forest model
+rf_model <- train_rf_model(train_set, ntree=100, mtry=5)
+```
+
+```{r}
+# Evaluate the random forest model
+rf_evaluation_results <- evaluate_model(rf_model, test_set)
+```
+
+```{r}
+train_xgboost_model <- function(train_set, nrounds=100, max_depth=6, eta=0.3) {
+  # Convert target variables into factors
+  train_set$label <- factor(train_set$label)
+
+  # Create data matrix for xgboost
+  train_data_matrix <- xgb.DMatrix(as.matrix(train_set[, -ncol(train_set)]), label = as.numeric(train_set$label) - 1)
+  
+  # Parameters for xgboost
+  params <- list(
+    objective = "multi:softprob",
+    num_class = length(levels(train_set$label)),
+    max_depth = max_depth,
+    eta = eta
+  )
+
+  # Start time
+  start_time <- Sys.time()
+  
+  # Train xgboost model
+  xgb_model <- xgb.train(params = params, data = train_data_matrix, nrounds = nrounds)
+
+  # End time
+  end_time <- Sys.time()
+  
+  # Calculate runtime
+  runtime <- difftime(end_time, start_time, units = "secs")
+  
+  cat("XGBoost Training Runtime:", runtime, "seconds", "\n")
+  
+  return(xgb_model)
+}
+
+
+```
+
+```{r}
+xgb_model <- train_xgboost_model(train_set, nrounds=100, max_depth=6, eta=0.3)
+```
+
+```{r}
+xgb_evaluation_results <- evaluate_model(xgb_model, test_set)
+```
+
