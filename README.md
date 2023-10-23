@@ -6,49 +6,81 @@ Source: https://www.kaggle.com/datasets/vicsuperman/prediction-of-music-genre/da
 Licence: https://creativecommons.org/publicdomain/zero/1.0/
 ## 2.Data pre-processing(Processor.R and DataPreprocessor.R)
 ### Process.R:
-Handling Missing Values: It can replace missing values in the dataset and remove rows with missing values.
 
-Removing Duplicates: It can eliminate duplicate rows from the dataset.
+1. **initialize**: Initializes the object, setting the data frame (`df`) as a class property.
 
-Data Type Conversion: It can attempt to convert character columns to numeric format.
+2. **drop_single_unique_value_columns**: Removes columns from the data frame that have only one unique value, as they do not provide informative variance for analysis or modeling.
 
-Value Replacement: It can replace specific values in a chosen column with values from a provided dictionary.
+3. **replace_missing_values**: Replaces specified representations of missing values in the data frame with `NA`, and then drops rows with `NA` values. 
 
-Handling High Cardinality Categoricals: It can remove non-numeric columns with a high number of unique values.
+4. **drop_missing_values**: Removes rows from the data frame that contain any `NA` values.
 
-Encoding Categorical Data: It can encode categorical columns into integer values, suitable for machine learning.
+5. **remove_duplicates**: Eliminates duplicate rows from the data frame.
 
-Label Encoding: It can encode a specified label column, often used in classification tasks.
+6. **convert_strings_to_numeric**: Attempts to convert character columns to numeric where possible. If a column can't be converted, it's left as is.
 
-Feature Scaling: It standardizes numeric columns by centering them at zero and scaling to a standard deviation of 1.
+7. **drop_high_dim_non_numericals**: Removes character columns from the data frame if the number of unique non-NA values in a column exceeds a specified threshold ratio of the number of rows.
 
-Column Dropping: It can drop specified columns from the dataset.
+8. **encode_categoricals**: Converts character columns (except specified exceptions) to numeric by transforming them into factors and then converting to integer codes.
 
-Renaming Label Column: It renames the label column to 'label' for consistency.
+9. **encode_labels**: Specifically converts a specified label column to numeric using factor encoding.
 
-Feature Selection: It selects features based on their correlation with the label column.
+10. **scale_features**: Scales numeric columns in the data frame, excluding specified columns.
+
+11. **drop_columns**: Removes specified columns from the data frame.
+
+12. **rename_label_column**: Renames a specified label column to 'label'.
+
+13. **select_features_based_on_correlation**: Keeps features in the data frame that have a correlation with the label column above a certain threshold.
+
+14. **get_processed_dataframe**: Returns the processed data frame.
+
+15. **replace_values_in_column**: Replaces specific values in a specified column based on a provided map.
+
+16. **process_dataframe**: A comprehensive function that applies several preprocessing steps in sequence, including missing value replacement, value replacement in a key column, high dimensionality reduction, string to numeric conversion, categorical encoding, column dropping, feature selection based on correlation, label column renaming, label encoding, and feature scaling.
+
+Each function is designed to modify the data frame stored in the class, providing a fluent interface that allows chaining multiple preprocessing steps together. The `process_dataframe` function serves as a higher-level interface to apply a series of preprocessing steps in a standardized way.
+
 ### DataPreprocessor.R：
-Data Splitting: The split_data method splits a dataset into training, validation, and testing sets. It uses stratified sampling to ensure class balance.
+summary for each function:
 
-Principal Component Analysis (PCA): The apply_pca method performs PCA on the data to reduce its dimensionality while retaining a specified level of explained variance.
+1. **initialize**: 
+   - Initializes the class instance.
+   
+2. **split_data**: 
+   - Splits data into train, test, and optionally validation sets using stratified sampling.
 
-Undersampling: The undersample method balances the class distribution in the dataset by randomly undersampling the majority class.
+3. **apply_pca**: 
+   - Reduces dataset dimensionality by applying PCA, using the training data to determine components.
 
-K-Nearest Neighbors (KNN) Model: The train_initial_model method trains a KNN classifier on the undersampled training data and predicts labels for the validation set.
+4. **undersample**: 
+   - Balances classes by limiting each to the size of the smallest class.
 
-Similarity Matrix Calculation: The compute_similarity_matrix method computes a similarity matrix based on the confusion matrix of predicted versus actual labels.
+5. **train_initial_model**: 
+   - Trains a k-NN model on undersampled data and predicts on a validation set.
 
-Visualization: The visualize_similarity_matrix method creates a heatmap to visualize the similarity matrix.
+6. **compute_similarity_matrix**: 
+   - Generates a matrix indicating label similarity based on prediction overlaps.
 
-Label Merging: The merge_classes_based_on_similarity method merges classes based on their similarity in prediction behavior.
+7. **visualize_similarity_matrix**: 
+   - Displays a heatmap showing how similar different labels are based on their predictions.
 
-Label Reencoding: The reencode_labels method reencodes labels as numeric values using factors.
+8. **merge_classes_based_on_similarity**: 
+   - Combines labels with similarity beyond a given threshold to address overlaps.
 
-Saving Datasets: The save_datasets_to_csv method saves the training and testing datasets to CSV files.
+9. **reencode_labels**: 
+   - Assigns new numeric codes to labels for consistency after potential merges.
 
-Label Counts: The label_counts method provides a count of unique labels in the dataset.
+10. **save_datasets_to_csv**: 
+   - Exports the processed datasets as CSV files.
 
-Overall Data Preprocessing: The perform_initial_steps method orchestrates a series of preprocessing steps, including data splitting, undersampling, model training, similarity analysis, label merging, reencoding, and optional PCA. It returns the final preprocessed datasets and related information.
+11. **label_counts**: 
+   - Provides a count of instances for each label in the dataset.
+
+12. **perform_initial_steps**: 
+   - Executes a series of preprocessing steps, including data splitting, undersampling, initial modeling, label merging, and PCA.
+
+This class structures and simplifies the data preprocessing workflow, especially for imbalanced classification tasks.
 
 **Algorithms and Techniques in DataPreprocessor.R:**
 
