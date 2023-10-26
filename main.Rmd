@@ -89,6 +89,17 @@ evaluate_model <- function(model, test_set) {
   # Confusion matrix and other metrics
   confusion_matrix <- confusionMatrix(predictions, test_set$label)
   
+  # Micro-averaged F1 score calculation
+  tp <- sum(diag(confusion_matrix$table))
+  fp <- sum(rowSums(confusion_matrix$table)) - tp
+  fn <- sum(colSums(confusion_matrix$table)) - tp
+  micro_f1 <- (2 * tp) / ((2 * tp) + fn + fp)
+
+  # Macro-averaged F1 score calculation
+  per_class_f1 <- 2 * confusion_matrix$byClass[, "Recall"] * confusion_matrix$byClass[, "Precision"] /
+                 (confusion_matrix$byClass[, "Recall"] + confusion_matrix$byClass[, "Precision"])
+  macro_f1 <- mean(per_class_f1, na.rm = TRUE)
+  
   # Classification report
   classification_report <- table(Reference = test_set$label, Prediction = predictions)
   
@@ -116,10 +127,16 @@ evaluate_model <- function(model, test_set) {
   cat("Model Evaluation Results:\n")
   cat("------------------------------\n")
   cat("Accuracy:", confusion_matrix$overall["Accuracy"], "\n")
+  cat("Micro F1 Score:", micro_f1, "\n")
+  cat("Macro F1 Score:", macro_f1, "\n")
   cat("\nConfusion Matrix:\n")
   print(confusion_matrix)
-
-  return(list(accuracy = confusion_matrix$overall["Accuracy"], confusion_matrix = confusion_matrix, classification_report = classification_report))
+  
+  return(list(accuracy = confusion_matrix$overall["Accuracy"], 
+              micro_f1_score = micro_f1,
+              macro_f1_score = macro_f1,
+              confusion_matrix = confusion_matrix, 
+              classification_report = classification_report))
 }
 
 ```
